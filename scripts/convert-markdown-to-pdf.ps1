@@ -141,6 +141,14 @@ function Build-ReportHtml {
     vertical-align: top;
   }
   tr:nth-child(even) td { background: #fbfdff; }
+  .trello-recent {
+    color: #1a56db;
+    font-weight: 700;
+  }
+  .trello-total {
+    color: var(--muted);
+    font-weight: 500;
+  }
   hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
   .report-footer {
     margin-top: 18px;

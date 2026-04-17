@@ -13,7 +13,8 @@ Generate daily or weekly Git activity reports across one repository or a folder 
 - Optional markdown-only mode (`-SkipPdf`) for CI environments.
 - Trello task section support:
   - always: detects Trello-like task refs from commit messages
-  - optional: loads live Trello card activity when API credentials are provided
+  - optional: loads live Trello board data when API credentials are provided
+  - per board: **To Do created** and **entered In Progress** and **completed** counts for the report window, plus **current list totals** in parentheses (styled in PDF as period vs total)
   - Trello metrics are included per repository and aggregated in rollup totals
 
 ## Requirements
@@ -84,7 +85,7 @@ Set-Location "C:\path\to\git-activity-report-tool"
 You can also set environment variables:
 
 - `TRELLO_API_KEY`
-- `TRELLO_API_TOKEN`
+- `TRELLO_API_TOKEN` (or `TRELLO_TOKEN` if the API token variable is unset)
 - `TRELLO_BOARD_ID` (or `TRELLO_BOARD_NAME`)
 
 ## Output
@@ -98,7 +99,6 @@ By default, the markdown file is deleted when PDF generation succeeds.
 
 ## Scripts
 
-- `scripts\new-git-activity-report.ps1` - Builds report metrics and markdown, then invokes PDF conversion.
-- `scripts\new-git-activity-report.ps1` - Builds report metrics and markdown; can optionally skip PDF generation with `-SkipPdf`.
+- `scripts\new-git-activity-report.ps1` - Builds report metrics and markdown, then invokes PDF conversion (use `-SkipPdf` for markdown-only).
 - `scripts\convert-markdown-to-pdf.ps1` - Converts markdown to a styled PDF.
 
