@@ -62,9 +62,10 @@ $ErrorActionPreference = "Stop"
 function Import-TrelloDotEnvFile {
     param([string] $Path)
     if (-not (Test-Path -LiteralPath $Path)) { return }
-    $allowed = New-Object "System.Collections.Generic.HashSet[string]" ([string[]]@(
-            "TRELLO_API_KEY", "TRELLO_TOKEN", "TRELLO_API_TOKEN", "TRELLO_BOARD_ID", "TRELLO_BOARD_NAME"
-        ))
+    $allowed = New-Object "System.Collections.Generic.HashSet[string]"
+    foreach ($k in @("TRELLO_API_KEY", "TRELLO_TOKEN", "TRELLO_API_TOKEN", "TRELLO_BOARD_ID", "TRELLO_BOARD_NAME")) {
+        [void]$allowed.Add($k)
+    }
     foreach ($line in Get-Content -LiteralPath $Path -Encoding UTF8) {
         $t = $line.Trim()
         if (-not $t -or $t.StartsWith("#")) { continue }
@@ -443,7 +444,7 @@ function Get-TrelloBoardActionsPaged {
         if (-not $beforeId) { break }
     }
 
-    return @($collected)
+    return ,($collected.ToArray())
 }
 
 function Get-TrelloCardUrl {
@@ -484,7 +485,7 @@ function Get-TrelloBoardWorkMetrics {
     $todoCreated = 0
     $enteredInProgress = 0
     $completedMoves = 0
-    $activityKeys = New-Object "System.Collections.Generic.HashSet[string]"
+    $activitySeen = @{}
     $activityRows = New-Object "System.Collections.Generic.List[object]"
 
     $actions = Get-TrelloBoardActionsPaged -ApiKey $ApiKey -ApiToken $ApiToken -BoardId $BoardId -SinceUtc $sinceUtc -UntilUtc $untilUtc
@@ -502,8 +503,9 @@ function Get-TrelloBoardWorkMetrics {
 
             $card = $a.data.card
             if ($card) {
-                $key = "c:$($card.id)"
-                if ($activityKeys.Add($key)) {
+                $key = "c:$([string]$card.id)"
+                if (-not $activitySeen.ContainsKey($key)) {
+                    $activitySeen[$key] = $true
                     $activityRows.Add([pscustomobject]@{
                             WhenUtc = $ad
                             Kind = "Created"
@@ -534,8 +536,9 @@ function Get-TrelloBoardWorkMetrics {
             if ($listAfter -and $listBefore -and $listAfter -ne $listBefore) {
                 $card = $a.data.card
                 if ($card) {
-                    $key = "m:$($card.id):$($ad.Ticks):$listAfter"
-                    if ($activityKeys.Add($key)) {
+                    $key = "m:$([string]$card.id):$($ad.Ticks):$listAfter"
+                    if (-not $activitySeen.ContainsKey($key)) {
+                        $activitySeen[$key] = $true
                         $activityRows.Add([pscustomobject]@{
                                 WhenUtc = $ad
                                 Kind = "Moved"
