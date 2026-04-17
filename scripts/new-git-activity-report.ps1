@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Generate a git activity report (daily, weekly, or custom) and export to PDF.
@@ -51,14 +51,59 @@ param(
     [string] $TrelloBoardId = $env:TRELLO_BOARD_ID,
 
     [Parameter(Mandatory = $false)]
-    [string] $TrelloBoardName = $env:TRELLO_BOARD_NAME
+    [string] $TrelloBoardName = $env:TRELLO_BOARD_NAME,
+
+    [Parameter(Mandatory = $false)]
+    [string] $TrelloEnvFile
 )
 
 $ErrorActionPreference = "Stop"
 
-if (-not $TrelloApiToken) {
-    $TrelloApiToken = $env:TRELLO_TOKEN
+function Import-TrelloDotEnvFile {
+    param([string] $Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $allowed = New-Object "System.Collections.Generic.HashSet[string]" ([string[]]@(
+            "TRELLO_API_KEY", "TRELLO_TOKEN", "TRELLO_API_TOKEN", "TRELLO_BOARD_ID", "TRELLO_BOARD_NAME"
+        ))
+    foreach ($line in Get-Content -LiteralPath $Path -Encoding UTF8) {
+        $t = $line.Trim()
+        if (-not $t -or $t.StartsWith("#")) { continue }
+        $eq = $t.IndexOf("=")
+        if ($eq -lt 1) { continue }
+        $k = $t.Substring(0, $eq).Trim()
+        if (-not $allowed.Contains($k)) { continue }
+        $v = $t.Substring($eq + 1).Trim()
+        if (($v.Length -ge 2) -and (
+                ($v.StartsWith('"') -and $v.EndsWith('"')) -or
+                ($v.StartsWith("'") -and $v.EndsWith("'")))) {
+            $v = $v.Substring(1, $v.Length - 2)
+        }
+        Set-Item -Path "Env:$k" -Value $v
+    }
 }
+
+# Same credentials file the local Trello MCP server typically loads (cwd + .env).
+$resolvedTrelloEnv = $null
+foreach ($candidate in @($TrelloEnvFile, $env:TRELLO_ENV_FILE, (Join-Path $env:USERPROFILE "tools\trello-mcp-server\.env"))) {
+    if (-not $candidate) { continue }
+    try {
+        $full = [System.IO.Path]::GetFullPath($candidate)
+    }
+    catch {
+        continue
+    }
+    if (Test-Path -LiteralPath $full) {
+        $resolvedTrelloEnv = $full
+        Import-TrelloDotEnvFile -Path $full
+        break
+    }
+}
+
+if (-not $TrelloApiKey) { $TrelloApiKey = $env:TRELLO_API_KEY }
+if (-not $TrelloApiToken) { $TrelloApiToken = $env:TRELLO_API_TOKEN }
+if (-not $TrelloApiToken) { $TrelloApiToken = $env:TRELLO_TOKEN }
+if (-not $TrelloBoardId) { $TrelloBoardId = $env:TRELLO_BOARD_ID }
+if (-not $TrelloBoardName) { $TrelloBoardName = $env:TRELLO_BOARD_NAME }
 
 function Get-PeriodBounds {
     param(
@@ -89,11 +134,11 @@ function Get-PeriodBounds {
 function Invoke-GitLines {
     param(
         [string] $RepoPath,
-        [string[]] $Args
+        [string[]] $GitArgs
     )
     Push-Location $RepoPath
     try {
-        return @(& git @Args 2>$null)
+        return @(& git @GitArgs 2>$null)
     }
     finally {
         Pop-Location
@@ -103,9 +148,9 @@ function Invoke-GitLines {
 function Invoke-GitCount {
     param(
         [string] $RepoPath,
-        [string[]] $Args
+        [string[]] $GitArgs
     )
-    $lines = Invoke-GitLines -RepoPath $RepoPath -Args $Args
+    $lines = Invoke-GitLines -RepoPath $RepoPath -GitArgs $GitArgs
     if (-not $lines -or -not $lines[0]) { return 0 }
     $count = 0
     [void][int]::TryParse($lines[0].Trim(), [ref]$count)
@@ -126,13 +171,14 @@ function Get-RepoMetrics {
         $authorArgs = @("--author=$AuthorFilter")
     }
 
-    $countBase = @("--since=$SinceText", "--until=$UntilText") + $authorArgs + @("HEAD")
-    $total = Invoke-GitCount -RepoPath $RepoPath -Args (@("rev-list", "--count") + $countBase)
-    $merges = Invoke-GitCount -RepoPath $RepoPath -Args (@("rev-list", "--count", "--merges") + $countBase)
-    $nonMerges = Invoke-GitCount -RepoPath $RepoPath -Args (@("rev-list", "--count", "--no-merges") + $countBase)
+    # Counting hashes from git log is more resilient than rev-list --count when
+    # git emits non-numeric output in some environments.
+    $total = (Invoke-GitLines -RepoPath $RepoPath -GitArgs (@("log", "--since=$SinceText", "--until=$UntilText") + $authorArgs + @("--format=%H"))).Count
+    $merges = (Invoke-GitLines -RepoPath $RepoPath -GitArgs (@("log", "--since=$SinceText", "--until=$UntilText") + $authorArgs + @("--merges", "--format=%H"))).Count
+    $nonMerges = (Invoke-GitLines -RepoPath $RepoPath -GitArgs (@("log", "--since=$SinceText", "--until=$UntilText") + $authorArgs + @("--no-merges", "--format=%H"))).Count
 
     $numstatArgs = @("log", "--since=$SinceText", "--until=$UntilText") + $authorArgs + @("--no-merges", "--pretty=tformat:", "--numstat")
-    $numstatLines = Invoke-GitLines -RepoPath $RepoPath -Args $numstatArgs
+    $numstatLines = Invoke-GitLines -RepoPath $RepoPath -GitArgs $numstatArgs
     $added = 0L
     $removed = 0L
     $binaryRows = 0
@@ -154,7 +200,7 @@ function Get-RepoMetrics {
 
     $files = New-Object "System.Collections.Generic.HashSet[string]"
     $nameOnlyArgs = @("log", "--since=$SinceText", "--until=$UntilText") + $authorArgs + @("--name-only", "--pretty=format:")
-    foreach ($line in (Invoke-GitLines -RepoPath $RepoPath -Args $nameOnlyArgs)) {
+    foreach ($line in (Invoke-GitLines -RepoPath $RepoPath -GitArgs $nameOnlyArgs)) {
         if ($line -and $line.Trim()) {
             [void]$files.Add($line.Trim())
         }
@@ -162,8 +208,8 @@ function Get-RepoMetrics {
 
     $subjectArgs = @("log", "--since=$SinceText", "--until=$UntilText") + $authorArgs + @("--no-merges", "--pretty=%s")
     $hashArgs = @("log", "--since=$SinceText", "--until=$UntilText") + $authorArgs + @("--no-merges", "--pretty=%H")
-    $subjects = Invoke-GitLines -RepoPath $RepoPath -Args $subjectArgs
-    $hashes = Invoke-GitLines -RepoPath $RepoPath -Args $hashArgs
+    $subjects = Invoke-GitLines -RepoPath $RepoPath -GitArgs $subjectArgs
+    $hashes = Invoke-GitLines -RepoPath $RepoPath -GitArgs $hashArgs
 
     $feat = 0; $fix = 0; $perf = 0; $refactor = 0; $docs = 0; $test = 0; $chore = 0; $build = 0; $ci = 0
     $featHeur = New-Object "System.Collections.Generic.HashSet[string]"
@@ -187,9 +233,9 @@ function Get-RepoMetrics {
         if ($subject -match "(?i)\b(fix|bug|regression|patch)\b") { [void]$fixHeur.Add($hash) }
     }
 
-    $authors = Invoke-GitLines -RepoPath $RepoPath -Args (@("log", "--since=$SinceText", "--until=$UntilText") + $authorArgs + @("--format=%aN")) | Sort-Object -Unique
-    $highlights = Invoke-GitLines -RepoPath $RepoPath -Args (@("log", "--since=$SinceText", "--until=$UntilText") + $authorArgs + @("--oneline", "-n", "$MaxHighlights"))
-    $highlightTotal = (Invoke-GitLines -RepoPath $RepoPath -Args (@("log", "--since=$SinceText", "--until=$UntilText") + $authorArgs + @("--oneline"))).Count
+    $authors = Invoke-GitLines -RepoPath $RepoPath -GitArgs (@("log", "--since=$SinceText", "--until=$UntilText") + $authorArgs + @("--format=%aN")) | Sort-Object -Unique
+    $highlights = Invoke-GitLines -RepoPath $RepoPath -GitArgs (@("log", "--since=$SinceText", "--until=$UntilText") + $authorArgs + @("--oneline", "-n", "$MaxHighlights"))
+    $highlightTotal = (Invoke-GitLines -RepoPath $RepoPath -GitArgs (@("log", "--since=$SinceText", "--until=$UntilText") + $authorArgs + @("--oneline"))).Count
 
     return [pscustomobject]@{
         Name = (Split-Path $RepoPath -Leaf)
@@ -803,4 +849,5 @@ else {
 
 # Normalize process exit code for successful runs, even if earlier git probe commands failed non-fatally.
 $global:LASTEXITCODE = 0
+
 

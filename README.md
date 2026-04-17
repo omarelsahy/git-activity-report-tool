@@ -88,6 +88,8 @@ You can also set environment variables:
 - `TRELLO_API_TOKEN` (or `TRELLO_TOKEN` if the API token variable is unset)
 - `TRELLO_BOARD_ID` (or `TRELLO_BOARD_NAME`)
 
+If you use the local Trello MCP server under `%USERPROFILE%\tools\trello-mcp-server\`, the report script will **automatically load** `%USERPROFILE%\tools\trello-mcp-server\.env` when present (same keys as the MCP). Override with `-TrelloEnvFile` or `TRELLO_ENV_FILE`.
+
 ## Output
 
 The generator writes:
