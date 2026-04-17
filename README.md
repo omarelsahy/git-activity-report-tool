@@ -11,6 +11,9 @@ Generate daily or weekly Git activity reports across one repository or a folder 
 - Exports a styled PDF using Edge headless printing (Pandoc-enhanced HTML when available).
 - Optional `--author` filter to report on one contributor only.
 - Optional markdown-only mode (`-SkipPdf`) for CI environments.
+- Trello task section support:
+  - always: detects Trello-like task refs from commit messages
+  - optional: loads live Trello card activity when API credentials are provided
 
 ## Requirements
 
@@ -18,6 +21,7 @@ Generate daily or weekly Git activity reports across one repository or a folder 
 - Git on `PATH`
 - Microsoft Edge installed
 - Optional: Pandoc on `PATH` (for higher quality markdown rendering)
+- Optional (for live Trello data): Trello API key/token and board ID or board name
 
 ## Quick Start
 
@@ -63,6 +67,24 @@ Set-Location "C:\path\to\git-activity-report-tool"
   -KeepMarkdown `
   -SkipPdf
 ```
+
+## Trello Integration Example
+
+```powershell
+.\scripts\new-git-activity-report.ps1 `
+  -RootPath "C:\path\to\repos" `
+  -Period weekly `
+  -OutputDirectory "C:\path\to\reports\weekly" `
+  -TrelloApiKey "<key>" `
+  -TrelloApiToken "<token>" `
+  -TrelloBoardName "Engineering Board"
+```
+
+You can also set environment variables:
+
+- `TRELLO_API_KEY`
+- `TRELLO_API_TOKEN`
+- `TRELLO_BOARD_ID` (or `TRELLO_BOARD_NAME`)
 
 ## Output
 

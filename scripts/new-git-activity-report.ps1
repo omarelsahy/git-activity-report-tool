@@ -39,7 +39,19 @@ param(
     [switch] $KeepMarkdown,
 
     [Parameter(Mandatory = $false)]
-    [switch] $SkipPdf
+    [switch] $SkipPdf,
+
+    [Parameter(Mandatory = $false)]
+    [string] $TrelloApiKey = $env:TRELLO_API_KEY,
+
+    [Parameter(Mandatory = $false)]
+    [string] $TrelloApiToken = $env:TRELLO_API_TOKEN,
+
+    [Parameter(Mandatory = $false)]
+    [string] $TrelloBoardId = $env:TRELLO_BOARD_ID,
+
+    [Parameter(Mandatory = $false)]
+    [string] $TrelloBoardName = $env:TRELLO_BOARD_NAME
 )
 
 $ErrorActionPreference = "Stop"
@@ -197,6 +209,7 @@ function Get-RepoMetrics {
         Build = $build
         CI = $ci
         Authors = $authors
+        Subjects = $subjects
         Highlights = $highlights
         HighlightTotal = $highlightTotal
         ChangeVolume = ($added + $removed)
@@ -236,6 +249,87 @@ function Get-RepoTargets {
     return $repos
 }
 
+function Get-TrelloReferencesFromText {
+    param([string[]] $Lines)
+
+    $refs = New-Object "System.Collections.Generic.HashSet[string]"
+    if (-not $Lines) { return @() }
+
+    foreach ($line in $Lines) {
+        if (-not $line) { continue }
+
+        foreach ($m in [regex]::Matches($line, "https?://trello\.com/c/[A-Za-z0-9]+", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+            [void]$refs.Add($m.Value)
+        }
+        foreach ($m in [regex]::Matches($line, "\b[A-Z][A-Z0-9]+-\d+\b")) {
+            [void]$refs.Add($m.Value)
+        }
+    }
+    return @($refs | Sort-Object)
+}
+
+function Get-TrelloBoardByName {
+    param(
+        [string] $ApiKey,
+        [string] $ApiToken,
+        [string] $BoardName
+    )
+    $uri = "https://api.trello.com/1/members/me/boards?fields=id,name,url&key=$ApiKey&token=$ApiToken"
+    $boards = Invoke-RestMethod -Method Get -Uri $uri
+    if (-not $boards) { return $null }
+    return @($boards | Where-Object { $_.name -eq $BoardName } | Select-Object -First 1)[0]
+}
+
+function Get-TrelloSummary {
+    param(
+        [string] $ApiKey,
+        [string] $ApiToken,
+        [string] $BoardId,
+        [datetime] $SinceDate,
+        [datetime] $UntilDate
+    )
+
+    $listsUri = "https://api.trello.com/1/boards/$BoardId/lists?fields=id,name,closed&key=$ApiKey&token=$ApiToken"
+    $cardsUri = "https://api.trello.com/1/boards/$BoardId/cards?fields=id,name,idList,shortUrl,dateLastActivity,due,dueComplete,closed&key=$ApiKey&token=$ApiToken"
+    $lists = @(Invoke-RestMethod -Method Get -Uri $listsUri)
+    $cards = @(Invoke-RestMethod -Method Get -Uri $cardsUri)
+
+    $listNameById = @{}
+    foreach ($l in $lists) { $listNameById[$l.id] = $l.name }
+
+    $touched = @()
+    foreach ($c in $cards) {
+        if (-not $c.dateLastActivity) { continue }
+        $activity = [datetime]$c.dateLastActivity
+        if ($activity -ge $SinceDate -and $activity -le $UntilDate) {
+            $status = if ($listNameById.ContainsKey($c.idList)) { $listNameById[$c.idList] } else { "Unknown" }
+            $touched += [pscustomobject]@{
+                Id = $c.id
+                Name = $c.name
+                Status = $status
+                Url = $c.shortUrl
+                LastActivity = $activity
+                Due = $c.due
+                DueComplete = $c.dueComplete
+            }
+        }
+    }
+
+    $statusCounts = @{}
+    foreach ($card in $touched) {
+        if (-not $statusCounts.ContainsKey($card.Status)) {
+            $statusCounts[$card.Status] = 0
+        }
+        $statusCounts[$card.Status]++
+    }
+
+    return [pscustomobject]@{
+        TouchedCards = @($touched | Sort-Object -Property LastActivity -Descending)
+        TotalTouched = $touched.Count
+        StatusCounts = $statusCounts
+    }
+}
+
 $bounds = Get-PeriodBounds -Mode $Period -SinceInput $Since -UntilInput $Until
 $sinceDate = [datetime]$bounds.Since
 $untilDate = [datetime]$bounds.Until
@@ -272,6 +366,28 @@ $rollupFeatHeur = ($sortedMetrics | Measure-Object -Property FeatHeur -Sum).Sum
 $rollupFixHeur = ($sortedMetrics | Measure-Object -Property FixHeur -Sum).Sum
 
 $allAuthors = @($sortedMetrics | ForEach-Object { $_.Authors } | Sort-Object -Unique)
+$allSubjects = @($sortedMetrics | ForEach-Object { $_.Subjects })
+$trelloRefs = Get-TrelloReferencesFromText -Lines $allSubjects
+
+$trelloSummary = $null
+$resolvedTrelloBoardId = $TrelloBoardId
+if ((-not $resolvedTrelloBoardId) -and $TrelloBoardName -and $TrelloApiKey -and $TrelloApiToken) {
+    try {
+        $board = Get-TrelloBoardByName -ApiKey $TrelloApiKey -ApiToken $TrelloApiToken -BoardName $TrelloBoardName
+        if ($board) { $resolvedTrelloBoardId = $board.id }
+    }
+    catch {
+        Write-Warning "Failed to resolve Trello board by name: $($_.Exception.Message)"
+    }
+}
+if ($resolvedTrelloBoardId -and $TrelloApiKey -and $TrelloApiToken) {
+    try {
+        $trelloSummary = Get-TrelloSummary -ApiKey $TrelloApiKey -ApiToken $TrelloApiToken -BoardId $resolvedTrelloBoardId -SinceDate $sinceDate -UntilDate $untilDate
+    }
+    catch {
+        Write-Warning "Failed to load Trello cards: $($_.Exception.Message)"
+    }
+}
 
 if (-not (Test-Path -LiteralPath $OutputDirectory)) {
     New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
@@ -366,11 +482,61 @@ else {
     }
 }
 
+[void]$sb.AppendLine("## Trello tasks")
+[void]$sb.AppendLine()
+if ($trelloSummary) {
+    [void]$sb.AppendLine("### Live Trello snapshot")
+    [void]$sb.AppendLine()
+    [void]$sb.AppendLine("| Metric | Value |")
+    [void]$sb.AppendLine("|--------|------:|")
+    [void]$sb.AppendLine("| Board ID | $resolvedTrelloBoardId |")
+    [void]$sb.AppendLine("| Cards touched in period | $($trelloSummary.TotalTouched) |")
+    [void]$sb.AppendLine()
+    if ($trelloSummary.StatusCounts.Keys.Count -gt 0) {
+        [void]$sb.AppendLine("**Touched cards by status:**")
+        foreach ($k in ($trelloSummary.StatusCounts.Keys | Sort-Object)) {
+            [void]$sb.AppendLine("- ${k}: $($trelloSummary.StatusCounts[$k])")
+        }
+        [void]$sb.AppendLine()
+    }
+    [void]$sb.AppendLine("**Recent Trello cards in this period:**")
+    if ($trelloSummary.TouchedCards.Count -gt 0) {
+        foreach ($card in @($trelloSummary.TouchedCards | Select-Object -First 20)) {
+            $when = (Get-Date -Date $card.LastActivity -Format "yyyy-MM-dd HH:mm")
+            [void]$sb.AppendLine("- [$($card.Name)]($($card.Url)) - $($card.Status) - last activity $when")
+        }
+        if ($trelloSummary.TouchedCards.Count -gt 20) {
+            $extra = $trelloSummary.TouchedCards.Count - 20
+            [void]$sb.AppendLine()
+            [void]$sb.AppendLine("*+ $extra more Trello cards touched in this window.*")
+        }
+    }
+    else {
+        [void]$sb.AppendLine("- No Trello cards were touched in this period.")
+    }
+}
+else {
+    [void]$sb.AppendLine("Live Trello data was not loaded (missing board/API credentials or fetch unavailable).")
+}
+[void]$sb.AppendLine()
+[void]$sb.AppendLine("### Task references detected in commits")
+[void]$sb.AppendLine()
+if ($trelloRefs.Count -gt 0) {
+    foreach ($r in $trelloRefs) {
+        [void]$sb.AppendLine("- $r")
+    }
+}
+else {
+    [void]$sb.AppendLine("- No Trello-like references found in commit messages.")
+}
+[void]$sb.AppendLine()
+
 [void]$sb.AppendLine("## Caveats")
 [void]$sb.AppendLine()
 [void]$sb.AppendLine("- Metrics are derived from local git history only.")
 [void]$sb.AppendLine("- Feature and bug counts are message-pattern estimates.")
 [void]$sb.AppendLine("- Line churn is computed from non-merge commits using --numstat.")
+[void]$sb.AppendLine("- Trello section uses live Trello API only when credentials and board settings are provided; otherwise only commit-message references are shown.")
 [void]$sb.AppendLine()
 [void]$sb.AppendLine("## Output")
 [void]$sb.AppendLine()
