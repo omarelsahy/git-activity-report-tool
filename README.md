@@ -14,6 +14,7 @@ Generate daily or weekly Git activity reports across one repository or a folder 
 - Trello task section support:
   - always: detects Trello-like task refs from commit messages
   - optional: loads live Trello card activity when API credentials are provided
+  - Trello metrics are included per repository and aggregated in rollup totals
 
 ## Requirements
 
