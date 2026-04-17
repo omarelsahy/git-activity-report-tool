@@ -36,7 +36,10 @@ param(
     [switch] $IncludeEmptyRepos,
 
     [Parameter(Mandatory = $false)]
-    [switch] $KeepMarkdown
+    [switch] $KeepMarkdown,
+
+    [Parameter(Mandatory = $false)]
+    [switch] $SkipPdf
 )
 
 $ErrorActionPreference = "Stop"
@@ -375,29 +378,39 @@ else {
 
 Set-Content -LiteralPath $mdPath -Value $sb.ToString() -Encoding UTF8
 
-$converterPath = Join-Path $PSScriptRoot "convert-markdown-to-pdf.ps1"
-if (-not (Test-Path -LiteralPath $converterPath)) {
-    throw "Missing converter script: $converterPath"
+if (-not $SkipPdf) {
+    $converterPath = Join-Path $PSScriptRoot "convert-markdown-to-pdf.ps1"
+    if (-not (Test-Path -LiteralPath $converterPath)) {
+        throw "Missing converter script: $converterPath"
+    }
+
+    $convertArgs = @{
+        MarkdownPath = $mdPath
+        PdfPath = $pdfPath
+        HeaderLabel = $HeaderLabel
+    }
+    if ($LogoPath) {
+        $convertArgs["LogoPath"] = $LogoPath
+    }
+
+    & $converterPath @convertArgs
+
+    if (-not (Test-Path -LiteralPath $pdfPath)) {
+        throw "PDF generation did not produce a file at: $pdfPath"
+    }
 }
 
-$convertArgs = @{
-    MarkdownPath = $mdPath
-    PdfPath = $pdfPath
-    HeaderLabel = $HeaderLabel
-}
-if ($LogoPath) {
-    $convertArgs["LogoPath"] = $LogoPath
-}
-
-& $converterPath @convertArgs
-
-if (-not (Test-Path -LiteralPath $pdfPath)) {
-    throw "PDF generation did not produce a file at: $pdfPath"
-}
-
-if (-not $KeepMarkdown) {
+if (-not $KeepMarkdown -and -not $SkipPdf) {
     Remove-Item -LiteralPath $mdPath -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "Generated PDF report: $pdfPath"
+if ($SkipPdf) {
+    Write-Host "Generated markdown report: $mdPath"
+}
+else {
+    Write-Host "Generated PDF report: $pdfPath"
+}
+
+# Normalize process exit code for successful runs, even if earlier git probe commands failed non-fatally.
+$global:LASTEXITCODE = 0
 

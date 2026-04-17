@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse PowerShell scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $scripts = @(
+            "scripts/new-git-activity-report.ps1",
+            "scripts/convert-markdown-to-pdf.ps1"
+          )
+          foreach ($path in $scripts) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              Write-Host "Parse errors in $path"
+              $errors | ForEach-Object { Write-Host $_.ToString() }
+              throw "PowerShell parse validation failed."
+            }
+          }
+
+      - name: Generate markdown-only sample report
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Path "./Reports/CI" -Force | Out-Null
+          ./scripts/new-git-activity-report.ps1 `
+            -RootPath "." `
+            -Period custom `
+            -Since "2000-01-01 00:00:00" `
+            -Until "2100-01-01 00:00:00" `
+            -OutputDirectory "./Reports/CI" `
+            -ReportName "ci-sample" `
+            -KeepMarkdown `
+            -SkipPdf
+          if (-not (Test-Path -LiteralPath "./Reports/CI/ci-sample.md")) {
+            throw "Expected markdown output was not created."
+          }
+
