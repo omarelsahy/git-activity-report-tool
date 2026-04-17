@@ -84,16 +84,27 @@ function Import-TrelloDotEnvFile {
 }
 
 # Same credentials file the local Trello MCP server typically loads (cwd + .env).
+# Do not call Join-Path with a null profile (Linux CI); USERPROFILE is Windows-specific.
 $resolvedTrelloEnv = $null
-foreach ($candidate in @($TrelloEnvFile, $env:TRELLO_ENV_FILE, (Join-Path $env:USERPROFILE "tools\trello-mcp-server\.env"))) {
-    if (-not $candidate) { continue }
+$trelloEnvCandidates = @()
+foreach ($x in @($TrelloEnvFile, $env:TRELLO_ENV_FILE)) {
+    if (-not [string]::IsNullOrWhiteSpace($x)) {
+        $trelloEnvCandidates += $x
+    }
+}
+if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+    $trelloEnvCandidates += (Join-Path $env:USERPROFILE "tools\trello-mcp-server\.env")
+}
+
+foreach ($candidate in $trelloEnvCandidates) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
     try {
         $full = [System.IO.Path]::GetFullPath($candidate)
     }
     catch {
         continue
     }
-    if (Test-Path -LiteralPath $full) {
+    if (-not [string]::IsNullOrWhiteSpace($full) -and (Test-Path -LiteralPath $full)) {
         $resolvedTrelloEnv = $full
         Import-TrelloDotEnvFile -Path $full
         break
