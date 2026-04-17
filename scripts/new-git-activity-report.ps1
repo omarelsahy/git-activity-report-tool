@@ -340,6 +340,133 @@ function Get-TrelloBoards {
     return @(Invoke-RestMethod -Method Get -Uri $uri)
 }
 
+function Expand-TrelloListRecords {
+    param($Payload)
+    if ($null -eq $Payload) { return @() }
+    if ($Payload -is [System.Array]) {
+        if ($Payload.Count -eq 1 -and $Payload[0].name -is [System.Array]) {
+            return @(Expand-TrelloListRecords -Payload $Payload[0])
+        }
+        return @($Payload)
+    }
+    $names = $Payload.name
+    if ($names -is [System.Array]) {
+        $ids = $Payload.id
+        $closedVals = $Payload.closed
+        $poses = $Payload.pos
+        $out = @()
+        for ($i = 0; $i -lt $names.Count; $i++) {
+            $out += [pscustomobject]@{
+                id = $ids[$i]
+                name = [string]$names[$i]
+                closed = $closedVals[$i]
+                pos = $poses[$i]
+            }
+        }
+        return $out
+    }
+    return @($Payload)
+}
+
+function Expand-TrelloCardRecords {
+    param($Payload)
+    if ($null -eq $Payload) { return @() }
+    if ($Payload -is [System.Array]) {
+        if ($Payload.Count -eq 1 -and $Payload[0].name -is [System.Array]) {
+            return @(Expand-TrelloCardRecords -Payload $Payload[0])
+        }
+        return @($Payload)
+    }
+    $names = $Payload.name
+    if ($names -is [System.Array]) {
+        $ids = $Payload.id
+        $idLists = $Payload.idList
+        $closedVals = $Payload.closed
+        $shortUrls = $Payload.shortUrl
+        $out = @()
+        for ($i = 0; $i -lt $names.Count; $i++) {
+            $row = [ordered]@{
+                id = $ids[$i]
+                name = [string]$names[$i]
+                idList = $idLists[$i]
+                closed = $closedVals[$i]
+            }
+            if ($null -ne $shortUrls) {
+                $arr = $shortUrls
+                if ($arr -is [System.Array] -and $i -lt $arr.Count) {
+                    $row["shortUrl"] = $arr[$i]
+                }
+            }
+            $out += [pscustomobject]$row
+        }
+        return $out
+    }
+    return @($Payload)
+}
+
+function Expand-TrelloActionRecords {
+    param($Payload)
+    if ($null -eq $Payload) { return @() }
+    if ($Payload -is [System.Array]) {
+        if ($Payload.Count -eq 1 -and $Payload[0].date -is [System.Array]) {
+            return @(Expand-TrelloActionRecords -Payload $Payload[0])
+        }
+        return @($Payload)
+    }
+    $dates = $Payload.date
+    if ($dates -is [System.Array]) {
+        $ids = $Payload.id
+        $types = $Payload.type
+        $dataArr = $Payload.data
+        $out = @()
+        for ($i = 0; $i -lt $dates.Count; $i++) {
+            $out += [pscustomobject]@{
+                id = $ids[$i]
+                type = [string]$types[$i]
+                date = [string]$dates[$i]
+                data = $dataArr[$i]
+            }
+        }
+        return $out
+    }
+    return @($Payload)
+}
+
+function Get-TrelloNameSlug {
+    param([string] $Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return "" }
+    return ($Name.ToLowerInvariant() -replace "[^a-z0-9]+", "")
+}
+
+function Normalize-TrelloListLabel {
+    param([string] $Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return "" }
+    $t = $Text.ToLowerInvariant() -replace "[_\-]+", " "
+    $t = $t -replace "\s+", " "
+    return $t.Trim()
+}
+
+function Test-TrelloEntityOpen {
+    param($Item)
+    if ($null -eq $Item) { return $false }
+    if ($null -eq $Item.closed) { return $true }
+    if ($Item.closed -is [bool]) { return -not [bool]$Item.closed }
+    $s = [string]$Item.closed
+    return ($s -notmatch "^(?i)true$")
+}
+
+function Get-TrelloListPos {
+    param($List)
+    if ($null -eq $List -or $null -eq $List.pos) { return 0.0 }
+    $p = $List.pos
+    if ($p -is [System.Array]) {
+        $p = $p | Select-Object -First 1
+    }
+    $d = 0.0
+    [void][double]::TryParse([string]$p, [System.Globalization.NumberStyles]::Float, [cultureinfo]::InvariantCulture, [ref]$d)
+    return $d
+}
+
 function Format-TrelloPeriodTotalHtml {
     param(
         [int] $PeriodCount,
@@ -363,36 +490,51 @@ function Resolve-TrelloWorkflowLists {
     param(
         [object[]] $Lists
     )
-    $openLists = @($Lists | Where-Object { -not $_.closed })
+    $openLists = @($Lists | Where-Object { Test-TrelloEntityOpen -Item $_ })
     $byNorm = @{}
     foreach ($l in $openLists) {
-        $key = ($l.name -replace "\s+", " ").Trim().ToLowerInvariant()
+        $key = Normalize-TrelloListLabel -Text $l.name
+        if (-not $key) { continue }
         if (-not $byNorm.ContainsKey($key)) { $byNorm[$key] = @() }
         $byNorm[$key] += $l
     }
 
     $todo = $null
-    foreach ($k in @("to do", "todo", "backlog")) {
-        if ($byNorm.ContainsKey($k)) { $todo = $byNorm[$k][0]; break }
+    foreach ($k in @("to do", "todo", "backlog", "new", "queue", "ideas")) {
+        if ($byNorm.ContainsKey($k)) {
+            $todo = @($byNorm[$k]) | Select-Object -First 1
+            break
+        }
     }
     if (-not $todo) {
-        $todo = @($openLists | Where-Object { $_.name -match "^(?i)\s*to[\s-]*do\s*$" } | Select-Object -First 1)[0]
+        $todo = $openLists | Where-Object { (Normalize-TrelloListLabel -Text $_.name) -match "^(to do|todo|backlog)$" } | Select-Object -First 1
     }
 
     $inProgress = $null
-    foreach ($k in @("in progress", "doing", "active")) {
-        if ($byNorm.ContainsKey($k)) { $inProgress = $byNorm[$k][0]; break }
+    foreach ($k in @("in progress", "doing", "active", "wip")) {
+        if ($byNorm.ContainsKey($k)) {
+            $inProgress = @($byNorm[$k]) | Select-Object -First 1
+            break
+        }
     }
     if (-not $inProgress) {
-        $inProgress = @($openLists | Where-Object { $_.name -match "(?i)in\s+progress" } | Select-Object -First 1)[0]
+        $inProgress = $openLists |
+            Where-Object {
+                $nl = Normalize-TrelloListLabel -Text $_.name
+                $nl -eq "in progress" -or $nl -eq "doing" -or $nl -eq "active" -or $nl -eq "wip"
+            } |
+            Select-Object -First 1
     }
 
     $complete = $null
     foreach ($k in @("complete", "completed", "done")) {
-        if ($byNorm.ContainsKey($k)) { $complete = $byNorm[$k][0]; break }
+        if ($byNorm.ContainsKey($k)) {
+            $complete = @($byNorm[$k]) | Select-Object -First 1
+            break
+        }
     }
     if (-not $complete) {
-        $complete = @($openLists | Where-Object { $_.name -match "(?i)^(complete|completed)\s*$" } | Select-Object -First 1)[0]
+        $complete = $openLists | Where-Object { (Normalize-TrelloListLabel -Text $_.name) -match "^(complete|completed|done)$" } | Select-Object -First 1
     }
 
     return [pscustomobject]@{
@@ -418,12 +560,12 @@ function Get-TrelloBoardActionsPaged {
 
     while ($safety -lt 200) {
         $safety++
-        $uri = "https://api.trello.com/1/boards/$BoardId/actions?limit=1000&filter=createCard,updateCard&since=$sinceIso&fields=id,type,date,data&key=$ApiKey&token=$ApiToken"
+        $uri = "https://api.trello.com/1/boards/$BoardId/actions?limit=1000&filter=createCard,copyCard,updateCard&since=$sinceIso&fields=id,type,date,data&key=$ApiKey&token=$ApiToken"
         if ($beforeId) {
             $uri += "&before=$beforeId"
         }
 
-        $batch = @(Invoke-RestMethod -Method Get -Uri $uri)
+        $batch = Expand-TrelloActionRecords -Payload (Invoke-RestMethod -Method Get -Uri $uri)
         if (-not $batch -or $batch.Count -eq 0) { break }
 
         $oldestUtc = $null
@@ -467,20 +609,55 @@ function Get-TrelloBoardWorkMetrics {
     $sinceUtc = $SinceDate.ToUniversalTime()
     $untilUtc = $UntilDate.ToUniversalTime()
 
-    $listsUri = "https://api.trello.com/1/boards/$BoardId/lists?fields=id,name,closed&key=$ApiKey&token=$ApiToken"
+    $listsUri = "https://api.trello.com/1/boards/$BoardId/lists?fields=id,name,closed,pos&key=$ApiKey&token=$ApiToken"
     $cardsUri = "https://api.trello.com/1/boards/$BoardId/cards?fields=id,name,idList,shortUrl,closed&key=$ApiKey&token=$ApiToken"
-    $lists = @(Invoke-RestMethod -Method Get -Uri $listsUri)
-    $cards = @(Invoke-RestMethod -Method Get -Uri $cardsUri)
+    $lists = Expand-TrelloListRecords -Payload (Invoke-RestMethod -Method Get -Uri $listsUri)
+    $cards = Expand-TrelloCardRecords -Payload (Invoke-RestMethod -Method Get -Uri $cardsUri)
 
     $workflow = Resolve-TrelloWorkflowLists -Lists $lists
-    $todoId = if ($workflow.TodoList) { [string]$workflow.TodoList.id } else { $null }
-    $inProgressId = if ($workflow.InProgressList) { [string]$workflow.InProgressList.id } else { $null }
-    $completeId = if ($workflow.CompleteList) { [string]$workflow.CompleteList.id } else { $null }
 
-    $openCards = @($cards | Where-Object { -not $_.closed })
-    $todoTotal = if ($todoId) { @($openCards | Where-Object { $_.idList -eq $todoId }).Count } else { 0 }
-    $inProgressTotal = if ($inProgressId) { @($openCards | Where-Object { $_.idList -eq $inProgressId }).Count } else { 0 }
-    $completeTotal = if ($completeId) { @($openCards | Where-Object { $_.idList -eq $completeId }).Count } else { 0 }
+    $openListsOrdered = @(
+        $lists |
+        Where-Object { Test-TrelloEntityOpen -Item $_ } |
+        Sort-Object @{ Expression = { Get-TrelloListPos -List $_ }; Ascending = $true }
+    )
+
+    $todoList = $workflow.TodoList
+    $completeList = $workflow.CompleteList
+    $inProgressListNamed = $workflow.InProgressList
+
+    if (-not $todoList -and $openListsOrdered.Count -ge 1) {
+        $todoList = $openListsOrdered[0]
+    }
+    if (-not $completeList -and $openListsOrdered.Count -ge 2) {
+        $completeList = $openListsOrdered[-1]
+    }
+
+    $inProgressTargetIds = @()
+    if ($inProgressListNamed) {
+        $inProgressTargetIds = @([string]$inProgressListNamed.id)
+    }
+    elseif ($todoList -and $completeList) {
+        $orderedIds = @($openListsOrdered | ForEach-Object { [string]$_.id })
+        $ti = [array]::IndexOf($orderedIds, [string]$todoList.id)
+        $ci = [array]::IndexOf($orderedIds, [string]$completeList.id)
+        if ($ti -ge 0 -and $ci -gt $ti) {
+            foreach ($mid in $openListsOrdered[($ti + 1)..($ci - 1)]) {
+                $inProgressTargetIds += [string]$mid.id
+            }
+        }
+    }
+
+    $todoId = if ($todoList) { [string]$todoList.id } else { $null }
+    $completeId = if ($completeList) { [string]$completeList.id } else { $null }
+
+    $openCards = @($cards | Where-Object { Test-TrelloEntityOpen -Item $_ })
+    $todoTotal = if ($todoId) { @($openCards | Where-Object { [string]$_.idList -eq $todoId }).Count } else { 0 }
+    $inProgressTotal = 0
+    foreach ($ipId in $inProgressTargetIds) {
+        $inProgressTotal += @($openCards | Where-Object { [string]$_.idList -eq $ipId }).Count
+    }
+    $completeTotal = if ($completeId) { @($openCards | Where-Object { [string]$_.idList -eq $completeId }).Count } else { 0 }
 
     $todoCreated = 0
     $enteredInProgress = 0
@@ -494,7 +671,7 @@ function Get-TrelloBoardWorkMetrics {
         $ad = Parse-TrelloTimestamp -Iso $a.date
         if (-not $ad) { continue }
 
-        if ($a.type -eq "createCard") {
+        if ($a.type -eq "createCard" -or $a.type -eq "copyCard") {
             $listId = $null
             if ($a.data -and $a.data.list -and $a.data.list.id) { $listId = [string]$a.data.list.id }
             if ($todoId -and $listId -eq $todoId) {
@@ -503,12 +680,13 @@ function Get-TrelloBoardWorkMetrics {
 
             $card = $a.data.card
             if ($card) {
+                $kindLabel = if ($a.type -eq "copyCard") { "Copied" } else { "Created" }
                 $key = "c:$([string]$card.id)"
                 if (-not $activitySeen.ContainsKey($key)) {
                     $activitySeen[$key] = $true
                     $activityRows.Add([pscustomobject]@{
                             WhenUtc = $ad
-                            Kind = "Created"
+                            Kind = $kindLabel
                             Name = [string]$card.name
                             Url = (Get-TrelloCardUrl -CardData $card)
                         })
@@ -525,7 +703,8 @@ function Get-TrelloBoardWorkMetrics {
                 if ($a.data.listBefore -and $a.data.listBefore.id) { $listBefore = [string]$a.data.listBefore.id }
             }
 
-            if ($inProgressId -and $listAfter -eq $inProgressId -and $listBefore -ne $inProgressId) {
+            if ($inProgressTargetIds.Count -gt 0 -and $listAfter -and ($inProgressTargetIds -contains $listAfter) -and
+                $listBefore -and ($inProgressTargetIds -notcontains $listBefore)) {
                 $enteredInProgress++
             }
 
@@ -553,10 +732,29 @@ function Get-TrelloBoardWorkMetrics {
 
     $recentActivity = @($activityRows | Sort-Object -Property WhenUtc -Descending | Select-Object -First 25)
 
+    $todoLabel = if ($todoList) { [string]$todoList.name } else { "—" }
+    if ($inProgressListNamed) {
+        $inProgLabel = [string]$inProgressListNamed.name
+    }
+    elseif ($inProgressTargetIds.Count -gt 0) {
+        $midNames = @(
+            $openListsOrdered |
+            Where-Object { $inProgressTargetIds -contains [string]$_.id } |
+            ForEach-Object { $_.name }
+        )
+        $inProgLabel = ($midNames -join " · ")
+    }
+    else {
+        $inProgLabel = "—"
+    }
+    $completeLabel = if ($completeList) { [string]$completeList.name } else { "—" }
+    $resolvedListsSummary = "To Do column: **$todoLabel** · In Progress: **$inProgLabel** · Complete: **$completeLabel**"
+
     return [pscustomobject]@{
-        TodoListName = if ($workflow.TodoList) { [string]$workflow.TodoList.name } else { $null }
-        InProgressListName = if ($workflow.InProgressList) { [string]$workflow.InProgressList.name } else { $null }
-        CompleteListName = if ($workflow.CompleteList) { [string]$workflow.CompleteList.name } else { $null }
+        TodoListName = if ($todoList) { [string]$todoList.name } else { $null }
+        InProgressListName = if ($inProgressListNamed) { [string]$inProgressListNamed.name } elseif ($inProgLabel -ne "—") { $inProgLabel } else { $null }
+        CompleteListName = if ($completeList) { [string]$completeList.name } else { $null }
+        ResolvedListsSummary = $resolvedListsSummary
         TodoCreatedInPeriod = $todoCreated
         TodoTotalOnBoard = $todoTotal
         InProgressEnteredInPeriod = $enteredInProgress
@@ -618,7 +816,7 @@ $trelloRollupCompleteTotal = 0
 if ($TrelloApiKey -and $TrelloApiToken -and $sortedMetrics.Count -gt 0) {
     try {
         $trelloBoards = Get-TrelloBoards -ApiKey $TrelloApiKey -ApiToken $TrelloApiToken
-        $activeBoards = @($trelloBoards | Where-Object { -not $_.closed })
+        $activeBoards = @($trelloBoards | Where-Object { Test-TrelloEntityOpen -Item $_ })
         $boardById = @{}
         foreach ($b in $activeBoards) { $boardById[$b.id] = $b }
 
@@ -629,13 +827,25 @@ if ($TrelloApiKey -and $TrelloApiToken -and $sortedMetrics.Count -gt 0) {
                 if ($sortedMetrics.Count -eq 1) {
                     $selectedBoard = $boardById[$TrelloBoardId]
                 }
-                elseif ($boardById[$TrelloBoardId].name -ieq $repo.Name) {
-                    $selectedBoard = $boardById[$TrelloBoardId]
+                else {
+                    $bidBoard = $boardById[$TrelloBoardId]
+                    if ($bidBoard.name -ieq $repo.Name -or
+                        (Get-TrelloNameSlug -Name $bidBoard.name) -eq (Get-TrelloNameSlug -Name $repo.Name)) {
+                        $selectedBoard = $bidBoard
+                    }
                 }
             }
 
             if (-not $selectedBoard -and $TrelloBoardName) {
-                $selectedBoard = @($activeBoards | Where-Object { $_.name -ieq $TrelloBoardName } | Select-Object -First 1)[0]
+                $nameSlug = Get-TrelloNameSlug -Name $TrelloBoardName
+                $selectedBoard = @($activeBoards | Where-Object {
+                        $_.name -ieq $TrelloBoardName -or (Get-TrelloNameSlug -Name $_.name) -eq $nameSlug
+                    } | Select-Object -First 1)[0]
+            }
+
+            if (-not $selectedBoard) {
+                $repoSlug = Get-TrelloNameSlug -Name $repo.Name
+                $selectedBoard = @($activeBoards | Where-Object { (Get-TrelloNameSlug -Name $_.name) -eq $repoSlug } | Select-Object -First 1)[0]
             }
 
             if (-not $selectedBoard) {
@@ -758,6 +968,7 @@ else {
         if ($repoTrello) {
             $s = $repoTrello.Summary
             [void]$sb.AppendLine("| Trello board | [$($repoTrello.BoardName)]($($repoTrello.BoardUrl)) |")
+            [void]$sb.AppendLine("| Trello columns *(resolved)* | $($s.ResolvedListsSummary) |")
             [void]$sb.AppendLine("| Trello To Do created *(period / list total)* | $($s.TodoHtml) |")
             [void]$sb.AppendLine("| Trello entered In Progress *(period / list total)* | $($s.InProgressHtml) |")
             [void]$sb.AppendLine("| Trello completed *(moves to done list / list total)* | $($s.CompleteHtml) |")
@@ -810,6 +1021,7 @@ else {
 [void]$sb.AppendLine("- Line churn is computed from non-merge commits using --numstat.")
 [void]$sb.AppendLine("- Trello metrics are embedded into each repository section and rollup totals when Trello board mapping/credentials are available.")
 [void]$sb.AppendLine("- Trello **period** counts use board actions in the report window (creates in the To Do list, moves into In Progress, moves into the completed list). **Totals in parentheses** are current open cards on that list.")
+[void]$sb.AppendLine("- If list titles are not standard (To Do / In Progress / Done), the tool falls back to **board column order** (left = intake, right = done, columns between = in progress).")
 [void]$sb.AppendLine()
 [void]$sb.AppendLine("## Output")
 [void]$sb.AppendLine()

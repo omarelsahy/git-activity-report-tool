@@ -90,6 +90,12 @@ You can also set environment variables:
 
 If you use the local Trello MCP server under `%USERPROFILE%\tools\trello-mcp-server\`, the report script will **automatically load** `%USERPROFILE%\tools\trello-mcp-server\.env` when present (same keys as the MCP). Override with `-TrelloEnvFile` or `TRELLO_ENV_FILE`.
 
+Board selection matches a repository folder name to a Trello board **by slug** (letters and digits only), so `sdx-lockbox-sensor` matches boards like **SDX Lockbox Sensor** or `sdx_lockbox_sensor`. List names like **To-Do** / **In-Progress** are normalized before matching workflow columns.
+
+If no list titles match those patterns, the tool uses **column order** (`pos`): **leftmost** list is treated as intake (To Do), **rightmost** as done (Complete), and **lists in between** as In Progress for move metrics.
+
+On Windows PowerShell 5.1, large Trello JSON arrays are sometimes deserialized as a **single object with parallel properties** (for example many `date` values in one property). The report script expands those shapes for **lists**, **cards**, and **board actions** so counts stay accurate.
+
 ## Output
 
 The generator writes:
