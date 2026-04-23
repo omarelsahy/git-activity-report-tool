@@ -765,6 +765,8 @@ $sinceDate = [datetime]$bounds.Since
 $untilDate = [datetime]$bounds.Until
 $sinceText = $sinceDate.ToString("yyyy-MM-dd HH:mm:ss")
 $untilText = $untilDate.ToString("yyyy-MM-dd HH:mm:ss")
+$sinceDisplay = $sinceDate.ToString("MM/dd/yyyy")
+$untilDisplay = $untilDate.ToString("MM/dd/yyyy")
 $maxHighlights = [int]$bounds.MaxHighlights
 $label = [string]$bounds.Label
 
@@ -892,9 +894,13 @@ $mdPath = [System.IO.Path]::ChangeExtension($pdfPath, ".md")
 $sb = New-Object System.Text.StringBuilder
 [void]$sb.AppendLine("# Git activity report")
 [void]$sb.AppendLine()
-[void]$sb.AppendLine("**Report generated:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz') local  ")
 [void]$sb.AppendLine("**Period type:** $label  ")
-[void]$sb.AppendLine("**Period:** **$sinceText** through **$untilText**")
+if ($sinceDisplay -eq $untilDisplay) {
+    [void]$sb.AppendLine("**Period:** **$sinceDisplay**")
+}
+else {
+    [void]$sb.AppendLine("**Period:** **$sinceDisplay** through **$untilDisplay**")
+}
 if ($Author) {
     [void]$sb.AppendLine("**Author filter:** --author=""$Author""")
 }
