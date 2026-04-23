@@ -133,9 +133,11 @@ function Get-PeriodBounds {
             return @{ Since = $start; Until = $now; Label = "Daily"; MaxHighlights = 15 }
         }
         "weekly" {
+            # Work week: Monday 00:00:00 through Friday 23:59:59 (local), for the week that contains "now".
             $dayOffset = (([int]$now.DayOfWeek + 6) % 7)
             $monday = (Get-Date -Date $now.Date).AddDays(-$dayOffset)
-            return @{ Since = $monday; Until = $now; Label = "Weekly"; MaxHighlights = 25 }
+            $fridayEnd = $monday.AddDays(5).AddTicks(-1)
+            return @{ Since = $monday; Until = $fridayEnd; Label = "Weekly"; MaxHighlights = 25 }
         }
         "custom" {
             if (-not $SinceInput) { throw "When -Period custom is used, -Since is required." }
