@@ -10,6 +10,7 @@ Generate daily or weekly Git activity reports across one repository or a folder 
 - Sorts per-repo sections by change volume (`added + removed`), then commit count.
 - Exports a styled PDF using Edge headless printing (Pandoc-enhanced HTML when available).
 - Optional `--author` filter to report on one contributor only.
+- Markdown (and PDF) header lists **display name** (see `-AuthorDisplayName`), **Daily / Weekly / Custom Report**, the report window as **MM/DD/YYYY** (or start–end for multi-day), and **Repos:** with markdown links to `github.com` when `origin` is a GitHub remote.
 - Optional markdown-only mode (`-SkipPdf`) for CI environments.
 - Trello task section support:
   - optional: loads live Trello board data when API credentials are provided
@@ -41,9 +42,12 @@ Set-Location "C:\path\to\git-activity-report-tool"
 .\scripts\new-git-activity-report.ps1 `
   -RootPath "C:\path\to\repos" `
   -Period weekly `
-  -Author "Jane Doe" `
+  -Author "jane@example.com" `
+  -AuthorDisplayName "Jane Doe" `
   -OutputDirectory "C:\path\to\reports\weekly"
 ```
+
+Use `-AuthorDisplayName` for the header line when `-Author` is a git pattern (email, partial name, etc.). If you omit it, the script uses `-Author` as the display name, or else `git config user.name` from the first scanned repository.
 
 ## Custom Time Window Example
 

@@ -20,6 +20,9 @@ param(
     [Parameter(Mandatory = $false)]
     [string] $Author,
 
+    [Parameter(Mandatory = $false)]
+    [string] $AuthorDisplayName,
+
     [Parameter(Mandatory = $true)]
     [string] $OutputDirectory,
 
@@ -169,6 +172,32 @@ function Invoke-GitCount {
     return $count
 }
 
+function Resolve-GitHubHttpsRepoUrl {
+    param([string] $RemoteUrl)
+    if ([string]::IsNullOrWhiteSpace($RemoteUrl)) { return $null }
+    $u = $RemoteUrl.Trim()
+    $built = $null
+    if ($u -match '^git@github\.com:([^/]+)/([^\s/]+?)(?:\.git)?$') {
+        $built = "https://github.com/$($matches[1])/$($matches[2])"
+    }
+    elseif ($u -match '^ssh://git@github\.com/([^/]+)/([^\s/]+?)(?:\.git)?$') {
+        $built = "https://github.com/$($matches[1])/$($matches[2])"
+    }
+    elseif ($u -match '^https://github\.com/([^/]+)/([^\s/?#]+)') {
+        $repoSeg = $matches[2] -replace '\.git$', ''
+        $built = "https://github.com/$($matches[1])/$repoSeg"
+    }
+    if (-not $built) { return $null }
+    return ($built -replace '\.git$', '')
+}
+
+function Get-GitHubRepoWebUrl {
+    param([string] $RepoPath)
+    $lines = @(Invoke-GitLines -RepoPath $RepoPath -GitArgs @("remote", "get-url", "origin"))
+    if ($lines.Count -eq 0 -or [string]::IsNullOrWhiteSpace($lines[0])) { return $null }
+    return (Resolve-GitHubHttpsRepoUrl -RemoteUrl $lines[0])
+}
+
 function Get-RepoMetrics {
     param(
         [string] $RepoPath,
@@ -297,7 +326,9 @@ function Get-RepoTargets {
     }
 
     if ($top -and $top[0]) {
-        return @((Resolve-Path -LiteralPath $top[0]).Path)
+        # Leading comma: PowerShell unwraps single-element arrays from return values to a scalar;
+        # without it, foreach over $repoTargets would iterate characters of the path string.
+        return ,@((Resolve-Path -LiteralPath $top[0]).Path)
     }
 
     $children = Get-ChildItem -LiteralPath $resolved -Directory
@@ -308,7 +339,7 @@ function Get-RepoTargets {
             $repos += $child.FullName
         }
     }
-    return $repos
+    return ,$repos
 }
 
 function Get-TrelloBoardByName {
@@ -891,21 +922,69 @@ if (Test-Path -LiteralPath $pdfPath) {
 }
 $mdPath = [System.IO.Path]::ChangeExtension($pdfPath, ".md")
 
-$sb = New-Object System.Text.StringBuilder
-[void]$sb.AppendLine("# Git activity report")
-[void]$sb.AppendLine()
-[void]$sb.AppendLine("**Period type:** $label  ")
-if ($sinceDisplay -eq $untilDisplay) {
-    [void]$sb.AppendLine("**Period:** **$sinceDisplay**")
+$headerAuthor = $AuthorDisplayName
+if ([string]::IsNullOrWhiteSpace($headerAuthor)) {
+    if (-not [string]::IsNullOrWhiteSpace($Author)) {
+        $headerAuthor = $Author
+    }
+    elseif ($repoTargets.Count -gt 0) {
+        $gitNameLines = @(Invoke-GitLines -RepoPath $repoTargets[0] -GitArgs @("config", "user.name"))
+        if ($gitNameLines.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($gitNameLines[0])) {
+            $headerAuthor = $gitNameLines[0].Trim()
+        }
+    }
+}
+if ([string]::IsNullOrWhiteSpace($headerAuthor)) {
+    $headerAuthor = "Contributor"
+}
+
+$reportKindLine = switch ($Period.ToLowerInvariant()) {
+    "daily" { "Daily Report" }
+    "weekly" { "Weekly Report" }
+    "custom" { "Custom Report" }
+    default { "$label Report" }
+}
+
+$headerDateLine = if ($sinceDisplay -eq $untilDisplay) {
+    $sinceDisplay
 }
 else {
-    [void]$sb.AppendLine("**Period:** **$sinceDisplay** through **$untilDisplay**")
+    "$sinceDisplay - $untilDisplay"
 }
-if ($Author) {
-    [void]$sb.AppendLine("**Author filter:** --author=""$Author""")
+
+$repoLinkParts = @()
+foreach ($r in $sortedMetrics) {
+    $web = Get-GitHubRepoWebUrl -RepoPath $r.Path
+    $safeName = [string]$r.Name -replace '\]', '\]'
+    if ($web) {
+        $repoLinkParts += "[$safeName]($web)"
+    }
+    else {
+        $repoLinkParts += $safeName
+    }
 }
+$reposLine = if ($repoLinkParts.Count -eq 0) {
+    "Repos: _(none included)_"
+}
+else {
+    "Repos: $($repoLinkParts -join ', ')"
+}
+
+$pdfHeaderLabel = if ($PSBoundParameters.ContainsKey("HeaderLabel") -and -not [string]::IsNullOrWhiteSpace($HeaderLabel)) {
+    $HeaderLabel
+}
+else {
+    "$headerAuthor — $reportKindLine"
+}
+
+$sb = New-Object System.Text.StringBuilder
+[void]$sb.AppendLine($headerAuthor)
 [void]$sb.AppendLine()
-[void]$sb.AppendLine("**Scope:** $($repoTargets.Count) discovered repositories; $($sortedMetrics.Count) included in output.")
+[void]$sb.AppendLine($reportKindLine)
+[void]$sb.AppendLine()
+[void]$sb.AppendLine($headerDateLine)
+[void]$sb.AppendLine()
+[void]$sb.AppendLine($reposLine)
 [void]$sb.AppendLine()
 [void]$sb.AppendLine("---")
 [void]$sb.AppendLine()
@@ -1034,7 +1113,7 @@ if (-not $SkipPdf) {
     $convertArgs = @{
         MarkdownPath = $mdPath
         PdfPath = $pdfPath
-        HeaderLabel = $HeaderLabel
+        HeaderLabel = $pdfHeaderLabel
     }
     if ($LogoPath) {
         $convertArgs["LogoPath"] = $LogoPath
