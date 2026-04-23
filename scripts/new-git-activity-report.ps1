@@ -311,25 +311,6 @@ function Get-RepoTargets {
     return $repos
 }
 
-function Get-TrelloReferencesFromText {
-    param([string[]] $Lines)
-
-    $refs = New-Object "System.Collections.Generic.HashSet[string]"
-    if (-not $Lines) { return @() }
-
-    foreach ($line in $Lines) {
-        if (-not $line) { continue }
-
-        foreach ($m in [regex]::Matches($line, "https?://trello\.com/c/[A-Za-z0-9]+", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
-            [void]$refs.Add($m.Value)
-        }
-        foreach ($m in [regex]::Matches($line, "\b[A-Z][A-Z0-9]+-\d+\b")) {
-            [void]$refs.Add($m.Value)
-        }
-    }
-    return @($refs | Sort-Object)
-}
-
 function Get-TrelloBoardByName {
     param(
         [string] $ApiKey,
@@ -957,7 +938,6 @@ if ($sortedMetrics.Count -eq 0) {
 }
 else {
     foreach ($repo in $sortedMetrics) {
-        $repoRefs = Get-TrelloReferencesFromText -Lines $repo.Subjects
         $repoTrello = $null
         if ($trelloByRepo.ContainsKey($repo.Name)) {
             $repoTrello = $trelloByRepo[$repo.Name]
@@ -990,7 +970,6 @@ else {
             [void]$sb.AppendLine("| Trello entered In Progress *(period / list total)* | N/A |")
             [void]$sb.AppendLine("| Trello completed *(moves to done list / list total)* | N/A |")
         }
-        [void]$sb.AppendLine("| Trello-like refs in commit subjects | $($repoRefs.Count) |")
         [void]$sb.AppendLine()
         if ($repoTrello -and $repoTrello.Summary.RecentActivity.Count -gt 0) {
             [void]$sb.AppendLine("**Recent Trello activity (this period):**")

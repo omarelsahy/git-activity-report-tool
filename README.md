@@ -12,7 +12,6 @@ Generate daily or weekly Git activity reports across one repository or a folder 
 - Optional `--author` filter to report on one contributor only.
 - Optional markdown-only mode (`-SkipPdf`) for CI environments.
 - Trello task section support:
-  - always: detects Trello-like task refs from commit messages
   - optional: loads live Trello board data when API credentials are provided
   - per board: **To Do created** and **entered In Progress** and **completed** counts for the report window, plus **current list totals** in parentheses (styled in PDF as period vs total)
   - Trello metrics are included per repository and aggregated in rollup totals
