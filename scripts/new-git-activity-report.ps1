@@ -913,7 +913,12 @@ $defaultName = if ($ReportName) {
     $ReportName
 }
 else {
-    "Git-$label-Report-" + $sinceDate.ToString("MM-dd-yyyy")
+    if ($Period.ToLowerInvariant() -eq "weekly") {
+        "Git-Weekly-Report-{0}_to_{1}" -f $sinceDate.ToString("MM-dd-yyyy"), $untilDate.ToString("MM-dd-yyyy")
+    }
+    else {
+        "Git-$label-Report-" + $sinceDate.ToString("MM-dd-yyyy")
+    }
 }
 
 $pdfPath = Join-Path $OutputDirectory ($defaultName + ".pdf")
@@ -1048,12 +1053,6 @@ else {
             [void]$sb.AppendLine("| Trello To Do created *(period / list total)* | $($s.TodoHtml) |")
             [void]$sb.AppendLine("| Trello entered In Progress *(period / list total)* | $($s.InProgressHtml) |")
             [void]$sb.AppendLine("| Trello completed *(moves to done list / list total)* | $($s.CompleteHtml) |")
-        }
-        else {
-            [void]$sb.AppendLine("| Trello board | Not mapped / unavailable |")
-            [void]$sb.AppendLine("| Trello To Do created *(period / list total)* | N/A |")
-            [void]$sb.AppendLine("| Trello entered In Progress *(period / list total)* | N/A |")
-            [void]$sb.AppendLine("| Trello completed *(moves to done list / list total)* | N/A |")
         }
         [void]$sb.AppendLine()
         if ($repoTrello -and $repoTrello.Summary.RecentActivity.Count -gt 0) {

@@ -30,6 +30,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$DefaultBrandAssetsDir = "C:\Users\OmarElsahy\Scopedx Dropbox\Omar Elsahy\Logo assets"
 
 function Get-EdgePath {
     $candidates = @(
@@ -38,6 +39,23 @@ function Get-EdgePath {
     )
     foreach ($p in $candidates) {
         if (Test-Path -LiteralPath $p) { return $p }
+    }
+    return $null
+}
+
+function Resolve-BrandAsset {
+    param(
+        [string] $BrandAssetsDir,
+        [string[]] $RelativeCandidates
+    )
+    if ([string]::IsNullOrWhiteSpace($BrandAssetsDir) -or -not (Test-Path -LiteralPath $BrandAssetsDir)) {
+        return $null
+    }
+    foreach ($candidate in $RelativeCandidates) {
+        $full = Join-Path $BrandAssetsDir $candidate
+        if (Test-Path -LiteralPath $full) {
+            return (Resolve-Path -LiteralPath $full).Path
+        }
     }
     return $null
 }
@@ -63,11 +81,13 @@ function Build-ReportHtml {
 <title>Git Activity Report</title>
 <style>
   :root {
-    --ink: #1b1f3a;
-    --muted: #5f6682;
+    --brand-navy: #21005f;
+    --brand-blue: #024cc1;
+    --brand-cyan: #10a6f8;
+    --ink: #1a1f36;
+    --muted: #59607a;
     --surface: #f7f9ff;
-    --line: #d9dff0;
-    --accent: #2f6feb;
+    --line: #d9e0f2;
   }
   @page { size: A4; margin: 0.75in; }
   * { box-sizing: border-box; }
@@ -79,29 +99,42 @@ function Build-ReportHtml {
     line-height: 1.45;
   }
   .report-header {
-    border-bottom: 2px solid var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 2px solid var(--brand-blue);
     padding-bottom: 12px;
     margin-bottom: 16px;
   }
-  .label {
+  .header-meta {
+    max-width: 70%;
+  }
+  .brand-chip {
     display: inline-block;
-    background: var(--accent);
+    background: linear-gradient(90deg, var(--brand-blue), var(--brand-cyan));
     color: #fff;
     border-radius: 999px;
     padding: 4px 10px;
     font-size: 9pt;
     font-weight: 700;
     margin-bottom: 8px;
+    letter-spacing: 0.02em;
+  }
+  .label {
+    display: inline-block;
+    color: var(--brand-navy);
+    font-size: 14pt;
+    font-weight: 700;
   }
   .brand-mark {
     display: block;
-    max-height: 92px;
+    max-height: 108px;
     max-width: 460px;
     width: auto;
     object-fit: contain;
   }
   h1, h2, h3, h4 {
-    color: var(--ink);
+    color: var(--brand-navy);
     margin-top: 1.1em;
     margin-bottom: 0.45em;
     page-break-after: avoid;
@@ -130,7 +163,7 @@ function Build-ReportHtml {
     font-size: 9.8pt;
   }
   th {
-    background: #f0f4ff;
+    background: linear-gradient(90deg, #f0f6ff, #f8fbff);
     text-align: left;
     border: 1px solid var(--line);
     padding: 8px 10px;
@@ -142,7 +175,7 @@ function Build-ReportHtml {
   }
   tr:nth-child(even) td { background: #fbfdff; }
   .trello-recent {
-    color: #1a56db;
+    color: var(--brand-blue);
     font-weight: 700;
   }
   .trello-total {
@@ -161,7 +194,10 @@ function Build-ReportHtml {
 </head>
 <body>
   <header class="report-header">
-    <span class="label">$HeaderText</span>
+    <div class="header-meta">
+      <span class="brand-chip">SCOPE-Dx Activity Reporting</span><br/>
+      <span class="label">$HeaderText</span>
+    </div>
     $logoTag
   </header>
   <main>
@@ -199,6 +235,14 @@ try {
     $resolvedLogo = $null
     if ($LogoPath -and (Test-Path -LiteralPath $LogoPath)) {
         $resolvedLogo = (Resolve-Path -LiteralPath $LogoPath).Path
+    }
+    if (-not $resolvedLogo) {
+        $resolvedLogo = Resolve-BrandAsset -BrandAssetsDir $DefaultBrandAssetsDir -RelativeCandidates @(
+            "Logo files\PNGs - SVGs\SVG\Asset 1.svg",
+            "Logo files\PNGs - SVGs\SVG\Asset 2.svg",
+            "Logo files\SVG\Logo-1.svg",
+            "Logo files\SVG\Logo-2.svg"
+        )
     }
 
     $html = Build-ReportHtml -BodyHtml $bodyHtml -HeaderText $HeaderLabel -ResolvedLogoPath $resolvedLogo
